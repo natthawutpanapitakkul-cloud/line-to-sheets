@@ -220,26 +220,12 @@ For non-time-based forms (Engine Stop Check, Weekly Engine Check), return a sing
     return json.loads(text)
 
 
-def get_actual_headers(sheet_name: str) -> list[str]:
-    """Read actual column headers from row 4 of the sheet and clean them."""
-    service = get_sheets_service()
-    result = (
-        service.spreadsheets()
-        .values()
-        .get(spreadsheetId=SPREADSHEET_ID, range=f"'{sheet_name}'!4:4")
-        .execute()
-    )
-    raw = result.get("values", [[]])[0]
-    # Clean multi-line headers (Google Sheets wraps headers with \n)
-    return [h.replace("\n", " ").strip() for h in raw]
-
-
 def append_rows_to_sheet(sheet_name: str, rows: list[dict]):
     service = get_sheets_service()
 
-    # Get actual headers from row 4
-    headers = get_actual_headers(sheet_name)
-    print(f"Sheet headers (first 5): {headers[:5]}")
+    # Use hardcoded column order (matches sheet column order)
+    headers = SHEET_COLUMNS[sheet_name]
+    print(f"Using columns (first 5): {headers[:5]}")
 
     all_values = []
     for row_data in rows:
