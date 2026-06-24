@@ -63,27 +63,29 @@ def extract_form_data(image_bytes: bytes) -> dict:
     import base64
     image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
 
-    prompt = f"""You are reading a POME Biogas plant daily operation form photo.
+    prompt = """You are reading a POME Biogas plant daily operation form photo.
 
 The form belongs to one of these 5 sheet types:
-1. "1. Feed Water & Digester" — has fields like Feed Water Flow, pH, COD, Digester Temp, Digester pH, VFA, etc.
-2. "2. Gas Treatment" — has fields like Gas Flow, Gas Holder Level, Blower Pressure, H2S, CH4%, CO2%, etc.
-3. "3. Gas Engine (Daily)" — has fields like Engine Start/Stop Time, kWh Generated, Engine Speed, Lube Oil Temp, JW Temp, etc.
-4. "4. Engine Stop Check" — has fields like HT System Pressure, LT System Pressure, Air Filter, Oil Leaks, Battery, Gas Train, etc.
-5. "5. Weekly Engine Check" — has fields like Running Hours This Week, Power Generated, Battery SG, Oil Top-up Count, etc.
+1. "1. Feed Water & Digester"
+2. "2. Gas Treatment"
+3. "3. Gas Engine (Daily)"
+4. "4. Engine Stop Check"
+5. "5. Weekly Engine Check"
 
 Instructions:
 - Read the form title/header to identify which sheet type this is
 - Extract every readable field value
-- Return ONLY a valid JSON object with two keys:
+- The "data" object must be FLAT (no nested objects). If a field has sub-columns (e.g. time slots), combine them into one key like "Gas flow 2:00" and "Gas flow 6:00"
+- All values must be strings, numbers, or null — never objects or arrays
+- Return ONLY a valid JSON object with exactly two keys:
   "sheet": the exact sheet name from the list above
-  "data": an object where keys match the column headers exactly and values are the extracted values (use null for blank/illegible fields)
+  "data": a flat object where keys are column names and values are the extracted values (use null for blank/illegible fields)
 
-Return only the JSON, no explanation."""
+Return only the JSON with no explanation, no markdown, no code fences."""
 
     response = anthropic_client.messages.create(
         model="claude-haiku-4-5",
-        max_tokens=2000,
+        max_tokens=4000,
         messages=[
             {
                 "role": "user",
@@ -116,7 +118,18 @@ Return only the JSON, no explanation."""
     if brace_match:
         text = brace_match.group(0)
 
-    return json.loads(text)
+    result = json.loads(text)
+
+    # Flatten any nested dicts in "data" to avoid Google Sheets errors
+    flat_data = {}
+    for k, v in result.get("data", {}).items():
+        if isinstance(v, dict):
+            for sub_k, sub_v in v.items():
+                flat_data[f"{k} {sub_k}"] = sub_v
+        else:
+            flat_data[k] = v
+    result["data"] = flat_data
+    return result
 
 
 def append_to_sheet(sheet_name: str, data: dict):
