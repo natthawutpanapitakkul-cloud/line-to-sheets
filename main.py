@@ -65,27 +65,29 @@ def extract_form_data(image_bytes: bytes) -> dict:
 
     prompt = """You are reading a POME Biogas plant daily operation form photo.
 
-The form belongs to one of these 5 sheet types:
+Identify which of these 5 sheet types it belongs to:
 1. "1. Feed Water & Digester"
 2. "2. Gas Treatment"
 3. "3. Gas Engine (Daily)"
 4. "4. Engine Stop Check"
 5. "5. Weekly Engine Check"
 
-Instructions:
-- Read the form title/header to identify which sheet type this is
-- Extract every readable field value
-- The "data" object must be FLAT (no nested objects). If a field has sub-columns (e.g. time slots), combine them into one key like "Gas flow 2:00" and "Gas flow 6:00"
-- All values must be strings, numbers, or null — never objects or arrays
-- Return ONLY a valid JSON object with exactly two keys:
-  "sheet": the exact sheet name from the list above
-  "data": a flat object where keys are column names and values are the extracted values (use null for blank/illegible fields)
+CRITICAL RULES for the JSON you return:
+- The "data" object must be completely FLAT — zero nested objects, zero arrays
+- For forms with time columns (e.g. 10:00 น., 14:00 น., 18:00 น., 22:00 น., 2:00 น., 6:00 น.):
+  Create one key per cell using the format: "RowName|TimeSlot"
+  Example: "Gen (MW)|10:00 น." = "2.000", "Gen (MW)|14:00 น." = "1.994"
+- For single-value fields: use the field name as the key directly
+- Use null for blank or illegible cells
+- Use "-" values as null
+- Do NOT nest any objects inside "data"
 
-Return only the JSON with no explanation, no markdown, no code fences."""
+Return ONLY this JSON structure, no markdown, no explanation:
+{"sheet": "<exact sheet name>", "data": {"key": "value", ...}}"""
 
     response = anthropic_client.messages.create(
         model="claude-haiku-4-5",
-        max_tokens=4000,
+        max_tokens=8000,
         messages=[
             {
                 "role": "user",
