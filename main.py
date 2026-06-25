@@ -168,11 +168,32 @@ Identify which of these 5 sheet types the form belongs to:
 Each sheet has these exact column headers:
 {sheet_col_info}
 
+FIELD NAME MAPPINGS (paper form label → exact sheet column name):
+For "2. Gas Treatment" (Scrubber form / ตารางตรวจสอบ ระบบ Scrubber):
+- "Gen (MW)" or "กำลังไฟฟ้า" → IGNORE (belongs to Engine sheet, not Gas Treatment)
+- "Gas flow (Nm³/h)" or "Gas flow" → "Gas Flow Before Scrubber (m³/hr)"
+- "CH₄ outlet (%)" or "CH4 outlet" → "CH₄ (%)"
+- "CO₂ outlet scrubber (%)" or "CO2 outlet" → "CO₂ (%)"
+- "O₂ outlet scrubber (%)" or "O2 outlet" → "O₂ (%)"
+- "H₂S outlet scrubber (ppm)" or "H2S outlet" → "Outlet H₂S (ppm)"
+- "H₂S inlet scrubber (ppm)" or "H2S inlet" → "Inlet H₂S (ppm)"
+- "Pump pressure (bar)" → "Coolant Pressure Hot Side (bar)"
+- "Water flow (m³/h) circulate pump" or "Water flow circulate" → "Liquid Flow (L/min)"
+- "pH ถัง Supply" or "pH Supply" → "pH Supply Tank"
+- "pH ถัง MUW" or "pH MUW" → "pH MUW Tank"
+- "pH (scrubber tank)" or "pH scrubber" → "pH Inside Scrubber"
+- "Pressure outlet scrubber (mbar)" → "ΔP Across Bed (mbar)"
+- "Different pressure (mbar)" or "Differential pressure" → "Differential Pressure (mbar)"
+- "อุณหภูมิขาเข้า/ขาออก Dehumidifier (°C)" → "Gas Temp Inlet (°C)" for inlet, "Gas Temp Outlet (°C)" for outlet (use slash-separated value, take first number for inlet, second for outlet)
+- "แรงดันน้ำยา Dehumidifier Low/High (PSI)" → "Blower Suction Pressure (mbar)" (use Low value only)
+- "Pressure ขาเข้า/ขาออก gas blower (mbar)" → "Blower 1 Pressure (mbar)" for inlet (first number)
+
 INSTRUCTIONS:
 - Read the form and identify the sheet type from the title/header
 - If the form has time-based columns (e.g. 10:00, 14:00, 18:00, 22:00, 2:00, 6:00 น.):
   Return ONE row object per time slot that has data
-- Match each form field to the closest column header from the list above
+- Apply the field name mappings above carefully — paper labels differ from sheet column names
+- Read numbers carefully — e.g. 921.10 is NOT 92.10, distinguish digits precisely
 - Use null for missing/blank/illegible values and for time slots with no data (dash "-")
 - Keys in each row object MUST be exact column header strings from the list above
 
