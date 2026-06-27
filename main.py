@@ -189,9 +189,14 @@ CRITICAL — read each label carefully from left column of the paper, then find 
 
 INSTRUCTIONS:
 - Read the form and identify the sheet type from the title/header
+- Read the date carefully from the top of the form — it is in DD/MM/YY format (Thai Buddhist year, e.g. 28/6/69)
 - If the form has time-based columns (e.g. 10:00, 14:00, 18:00, 22:00, 2:00, 6:00 น.):
   Return ONE row object for EVERY time slot column shown in the header (even if most values are dash/null)
 - Apply the field name mappings above — paper labels differ from sheet column names
+- STRICT RULE: For each time slot, only read the value from the EXACT row labeled on the paper.
+  If a row shows "-" or is blank for that time slot, output null for that column.
+  NEVER fill a sheet column with a value from a different paper row just because the correct row is empty.
+  Example: if "Gas flow (Nm³/h)" is "-" at 10:00, then "Gas Flow Before Scrubber (m³/hr)" must be null — do not use Pump pressure or any other row's value.
 - Read numbers carefully — e.g. 921.10 is nine-hundred-twenty-one point ten, NOT 92.10
 - Use null for missing/blank/illegible values and dashes ("-")
 - Keys in each row object MUST be exact column header strings from the list above
