@@ -40,21 +40,26 @@ SHEET_COLUMNS = {
     ],
     "2. Gas Treatment": [
         "Date (DD/MM/YY)", "Time (HH:MM)", "Shift A / B / C", "Operator Name",
+        # Gas Flow
         "Gas Flow Before Scrubber (m³/hr)", "Gas Flow Before MTU / Engine (m³/hr)",
-        "Gas Holder Level (%)", "Gas Holder Pressure (mbar)", "Flare Status (On/Off)",
-        "Gas Temp Inlet (°C)", "Gas Temp Outlet (°C)", "Gas Humidity (%RH)",
+        "Flare Status (On/Off)",
+        # Dehumidifier
+        "Gas Temp Inlet (°C)", "Gas Temp Outlet (°C)",
+        "Coolant Pressure Hot Side (bar)", "Coolant Pressure Cool Side (bar)",
+        "Gas Humidity (%RH)",
+        # Blower
         "Blower 1 Pressure (mbar)", "Blower 1 Flow (m³/hr)",
         "Blower 2 Pressure (mbar)", "Blower 2 Flow (m³/hr)",
         "Blower Suction Pressure (mbar)", "Gas Return Valve Position (%)",
-        "Coolant Pressure Hot Side (bar)", "Coolant Pressure Cool Side (bar)",
-        "Water Pressure 1 Open Valve (bar)", "Water Pressure 1 Baseline (bar)",
-        "Differential Pressure (mbar)",
+        # Bio-Scrubber
         "Inlet H₂S (ppm)", "Outlet H₂S (ppm)", "H₂S Removal Eff. (%)",
         "pH Supply Tank", "pH MUW Tank", "pH Inside Scrubber",
-        "Scrubber Temp (°C)", "Liquid Flow (L/min)", "Air Injection (m³/hr)",
-        "ΔP Across Bed (mbar)", "Sump Level (%)",
-        "CH₄ (%)", "CO₂ (%)", "O₂ (%)", "CO (ppm)",
-        "H₂S post-scrub (ppm)", "LHV (MJ/m³)", "Gas Quality Index (Pass/Fail)",
+        "Circulate Pump Pressure (bar)", "Circulate Pump Flow (m³/h)",
+        "Effluent Pump Flow (LPM)",
+        "Air Injection Valve (% open)", "Scrubber ΔP (mbar)", "Sump Level (%)",
+        # Gas Quality
+        "CH₄ (%)", "CO₂ (%)", "O₂ (%)", "H₂S post-scrub (ppm)",
+        "Gas Quality Index (Pass/Fail)",
         "Remarks / Issues / Actions Taken",
     ],
     "3. Gas Engine (Daily)": [
@@ -168,24 +173,56 @@ Identify which of these 5 sheet types the form belongs to:
 Each sheet has these exact column headers:
 {sheet_col_info}
 
-FIELD NAME MAPPINGS for "2. Gas Treatment" (Scrubber form / ตารางตรวจสอบ ระบบ Scrubber):
-CRITICAL — read each label carefully from left column of the paper, then find the value:
-- "Gen (MW)" → DO NOT USE. This is generator power, skip this row entirely, do not put its value anywhere.
-- "Gas flow (Nm³/h)" → "Gas Flow Before Scrubber (m³/hr)"  [e.g. 921.10, NOT the Gen value]
+FIELD NAME MAPPINGS for "2. Gas Treatment" (redesigned form — labels match sheet columns):
+CRITICAL — read each label carefully from the left column of the paper, then find the value:
+- "Gen (MW)" → DO NOT USE. Generator power — skip entirely, never put its value in any column.
+- "Gas Flow Before Scrubber" → "Gas Flow Before Scrubber (m³/hr)"
+- "Gas Flow Before MTU / Engine" → "Gas Flow Before MTU / Engine (m³/hr)"
+- "Flare Status" → "Flare Status (On/Off)"
+- "Gas Temp Inlet" → "Gas Temp Inlet (°C)"
+- "Gas Temp Outlet" → "Gas Temp Outlet (°C)"
+- "Coolant Pressure Hot Side" → "Coolant Pressure Hot Side (bar)"  [dehumidifier coolant — NOT scrubber pump]
+- "Coolant Pressure Cool Side" → "Coolant Pressure Cool Side (bar)"
+- "Gas Humidity" → "Gas Humidity (%RH)"  [may be blank — no equipment yet, output null]
+- "Blower 1 Pressure" → "Blower 1 Pressure (mbar)"
+- "Blower 1 Flow" → "Blower 1 Flow (m³/hr)"
+- "Blower 2 Pressure" → "Blower 2 Pressure (mbar)"
+- "Blower 2 Flow" → "Blower 2 Flow (m³/hr)"
+- "Blower Suction Pressure" → "Blower Suction Pressure (mbar)"
+- "Gas Return Valve Position" → "Gas Return Valve Position (%)"
+- "Inlet H₂S" → "Inlet H₂S (ppm)"  [gas ENTERING the scrubber]
+- "Outlet H₂S" → "Outlet H₂S (ppm)"  [gas LEAVING the scrubber — NOT Inlet]
+- "H₂S Removal Eff." → "H₂S Removal Eff. (%)"  [shaded on form — read if filled, null if blank]
+- "pH Supply Tank" → "pH Supply Tank"
+- "pH MUW Tank" → "pH MUW Tank"
+- "pH Inside Scrubber" → "pH Inside Scrubber"
+- "Circulate Pump Pressure" → "Circulate Pump Pressure (bar)"  [scrubber circulate pump — NOT coolant]
+- "Circulate Pump Flow" → "Circulate Pump Flow (m³/h)"
+- "Effluent Pump Flow" → "Effluent Pump Flow (LPM)"
+- "Air Injection Valve" → "Air Injection Valve (% open)"
+- "Scrubber ΔP" → "Scrubber ΔP (mbar)"
+- "Sump Level" → "Sump Level (%)"  [optional — null if blank]
+- "CH₄" → "CH₄ (%)"
+- "CO₂" → "CO₂ (%)"
+- "O₂" → "O₂ (%)"
+- "H₂S post-scrub" → "H₂S post-scrub (ppm)"
+- "Gas Quality Index" → "Gas Quality Index (Pass/Fail)"
+
+Old Thai-label form (backward compatibility):
+- "Gas flow (Nm³/h)" → "Gas Flow Before Scrubber (m³/hr)"
+- "H₂S inlet scrubber (ppm)" → "Inlet H₂S (ppm)"
+- "H₂S outlet scrubber (ppm)" → "Outlet H₂S (ppm)"  [NOT Inlet]
 - "CH₄ outlet (%)" → "CH₄ (%)"
 - "CO₂ outlet scrubber (%)" → "CO₂ (%)"
 - "O₂ outlet scrubber (%)" → "O₂ (%)"
-- "H₂S outlet scrubber (ppm)" → "Outlet H₂S (ppm)"  [NOT Inlet]
-- "H₂S inlet scrubber (ppm)" → "Inlet H₂S (ppm)"
-- "Pump pressure (bar)" → "Coolant Pressure Hot Side (bar)"
-- "Water flow (m³/h) circulate pump" → "Liquid Flow (L/min)"
+- "Pump pressure (bar)" → "Circulate Pump Pressure (bar)"  [scrubber circulate pump]
+- "Water flow (m³/h) circulate pump" → "Circulate Pump Flow (m³/h)"
 - "pH ถัง Supply" → "pH Supply Tank"
 - "pH ถัง MUW" → "pH MUW Tank"
 - "pH (scrubber tank)" → "pH Inside Scrubber"
-- "Pressure outlet scrubber (mbar)" → "ΔP Across Bed (mbar)"
-- "Different pressure (mbar)" → "Differential Pressure (mbar)"
-- "อุณหภูมิขาเข้า/ขาออก Dehumidifier (°C)" → first number → "Gas Temp Inlet (°C)", second number → "Gas Temp Outlet (°C)"
-- "Pressure ขาเข้า/ขาออก gas blower (mbar)" → first number → "Blower Suction Pressure (mbar)"
+- "Pressure outlet scrubber (mbar)" or "Different pressure (mbar)" → "Scrubber ΔP (mbar)"
+- "Air injection (% valve)" → "Air Injection Valve (% open)"
+- "อุณหภูมิขาเข้า/ขาออก Dehumidifier (°C)" → first number → "Gas Temp Inlet (°C)", second → "Gas Temp Outlet (°C)"
 
 INSTRUCTIONS:
 - Read the form and identify the sheet type from the title/header
@@ -243,6 +280,44 @@ For non-time-based forms (Engine Stop Check, Weekly Engine Check), return a sing
         text = brace_match.group(0)
 
     return json.loads(text)
+
+
+def fix_date(rows: list[dict]) -> list[dict]:
+    """Validate date from Claude; replace with today if misread."""
+    from datetime import datetime, timezone, timedelta, date as date_type
+    tz = timezone(timedelta(hours=7))
+    now = datetime.now(tz)
+    buddhist_year = (now.year + 543) % 100  # last 2 digits
+    today_str = f"{now.day}/{now.month}/{buddhist_year}"
+    today = now.date()
+
+    date_col = "Date (DD/MM/YY)"
+    for row in rows:
+        existing = row.get(date_col)
+        use_today = False
+        if existing:
+            try:
+                parts = str(existing).split("/")
+                if len(parts) == 3:
+                    d, m, y_be = int(parts[0]), int(parts[1]), int(parts[2])
+                    # Convert Buddhist year (2-digit) to Gregorian
+                    gregorian_year = (y_be + 2500) - 543  # e.g. 69 → 2569 → 2026
+                    parsed = date_type(gregorian_year, m, d)
+                    # Accept if within 3 days of today
+                    if abs((parsed - today).days) > 3:
+                        print(f"Date '{existing}' too far from today → using {today_str}")
+                        use_today = True
+                else:
+                    use_today = True
+            except Exception:
+                use_today = True
+        else:
+            use_today = True
+
+        if use_today:
+            row[date_col] = today_str
+            print(f"Date fixed to {today_str}")
+    return rows
 
 
 def append_rows_to_sheet(sheet_name: str, rows: list[dict]):
@@ -305,6 +380,8 @@ async def webhook(request: Request):
             if not rows:
                 print(f"No rows extracted for sheet: {sheet_name}")
                 continue
+
+            rows = fix_date(rows)
 
             append_rows_to_sheet(sheet_name, rows)
 
