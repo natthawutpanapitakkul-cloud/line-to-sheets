@@ -148,26 +148,46 @@ def merge_extractions(extractions: list[dict]) -> dict:
     Rows are combined positionally: row 0 from every extraction is assumed to
     be the same time slot, row 1 the same time slot, etc. (this matches how
     the forms lay out repeated hourly/shift columns identically on every
-    page). Later extractions never overwrite a value already filled by an
-    earlier one.
+    page). Most fields only appear on ONE page, so there's nothing to
+    resolve. But a few fields (Date, Shift, Operator Name, etc.) are repeated
+    on every page's header — if pages disagree on those (e.g. one page's
+    date was misread), we pick the value the MAJORITY of pages agree on
+    instead of just whichever extraction happened to run first. Ties keep
+    the first-seen value.
     """
+    from collections import Counter
+
     sheet_names_seen = [e.get("sheet") for e in extractions if e.get("sheet")]
     if len(set(sheet_names_seen)) > 1:
         print(f"Warning: batch had mismatched sheet types: {sheet_names_seen}")
     sheet_name = sheet_names_seen[0] if sheet_names_seen else None
 
     max_rows = max((len(e.get("rows", [])) for e in extractions), default=0)
-    merged_rows = [dict() for _ in range(max_rows)]
 
+    # (row_index, column_key) -> list of non-null values seen, in the order
+    # their extraction was processed
+    candidates: dict[tuple[int, str], list] = {}
     for e in extractions:
         for i, row in enumerate(e.get("rows", [])):
-            if i >= len(merged_rows):
+            if i >= max_rows:
                 continue
             for k, v in row.items():
                 if v is None or v == "":
                     continue
-                if merged_rows[i].get(k) in (None, ""):
-                    merged_rows[i][k] = v
+                candidates.setdefault((i, k), []).append(v)
+
+    merged_rows = [dict() for _ in range(max_rows)]
+    for (i, k), values in candidates.items():
+        if len(values) > 1 and len(set(values)) > 1:
+            # Pages disagree on this field — take the majority vote.
+            # Counter.most_common() is stable, so ties fall back to the
+            # first-seen value.
+            winner = Counter(values).most_common(1)[0][0]
+            if len(set(values)) > 1:
+                print(f"Row {i} field '{k}' disagreed across pages {values} -> using {winner}")
+        else:
+            winner = values[0]
+        merged_rows[i][k] = winner
 
     return {"sheet": sheet_name, "rows": merged_rows}
 
