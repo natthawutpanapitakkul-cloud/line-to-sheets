@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -126,6 +127,91 @@ SHEET_COLUMNS = {
 SHEET_NAMES = list(SHEET_COLUMNS.keys())
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+# --- Multi-page batching --------------------------------------------------
+# Some paper forms (e.g. "3. Gas Engine (Daily)") span multiple photos/pages
+# that together make up ONE report. LINE delivers each photo as its own
+# webhook event, so without batching each photo gets written as its own
+# incomplete set of rows. Instead, we buffer photos per LINE source
+# (group/room/user) and wait BATCH_DELAY_SECONDS after the last photo before
+# processing the whole batch together and merging into complete rows.
+BATCH_DELAY_SECONDS = 20
+
+# source_id -> {"images": [bytes, ...], "task": asyncio.Task | None}
+PENDING_BATCHES: dict[str, dict] = {}
+
+
+def merge_extractions(extractions: list[dict]) -> dict:
+    """Merge multiple Claude extraction results (one per photo/page of the
+    same report) into a single set of complete rows.
+
+    Rows are combined positionally: row 0 from every extraction is assumed to
+    be the same time slot, row 1 the same time slot, etc. (this matches how
+    the forms lay out repeated hourly/shift columns identically on every
+    page). Later extractions never overwrite a value already filled by an
+    earlier one.
+    """
+    sheet_names_seen = [e.get("sheet") for e in extractions if e.get("sheet")]
+    if len(set(sheet_names_seen)) > 1:
+        print(f"Warning: batch had mismatched sheet types: {sheet_names_seen}")
+    sheet_name = sheet_names_seen[0] if sheet_names_seen else None
+
+    max_rows = max((len(e.get("rows", [])) for e in extractions), default=0)
+    merged_rows = [dict() for _ in range(max_rows)]
+
+    for e in extractions:
+        for i, row in enumerate(e.get("rows", [])):
+            if i >= len(merged_rows):
+                continue
+            for k, v in row.items():
+                if v is None or v == "":
+                    continue
+                if merged_rows[i].get(k) in (None, ""):
+                    merged_rows[i][k] = v
+
+    return {"sheet": sheet_name, "rows": merged_rows}
+
+
+async def process_batch(source_id: str):
+    try:
+        await asyncio.sleep(BATCH_DELAY_SECONDS)
+    except asyncio.CancelledError:
+        # A newer photo arrived and rescheduled the timer; let the new task run.
+        return
+
+    batch = PENDING_BATCHES.pop(source_id, None)
+    if not batch or not batch["images"]:
+        return
+
+    images = batch["images"]
+    print(f"Processing batch of {len(images)} image(s) for source {source_id}")
+
+    extractions = []
+    for img in images:
+        try:
+            extractions.append(extract_form_data(img))
+        except Exception as e:
+            import traceback
+            print(f"Error extracting one image in batch: {e}")
+            print(traceback.format_exc())
+
+    if not extractions:
+        print("No successful extractions in batch")
+        return
+
+    merged = merge_extractions(extractions)
+    sheet_name = merged.get("sheet")
+    rows = merged.get("rows", [])
+
+    if sheet_name not in SHEET_NAMES:
+        print(f"Unknown sheet detected in batch: {sheet_name}")
+        return
+    if not rows:
+        print(f"No rows extracted for sheet: {sheet_name}")
+        return
+
+    rows = fix_date(rows)
+    append_rows_to_sheet(sheet_name, rows)
 
 
 def verify_line_signature(body: bytes, signature: str) -> bool:
@@ -327,6 +413,8 @@ def append_rows_to_sheet(sheet_name: str, rows: list[dict]):
     headers = SHEET_COLUMNS[sheet_name]
     print(f"Using columns (first 5): {headers[:5]}")
 
+    date_col = "Date (DD/MM/YY)"
+
     all_values = []
     for row_data in rows:
         row = []
@@ -334,6 +422,12 @@ def append_rows_to_sheet(sheet_name: str, rows: list[dict]):
             val = row_data.get(h)
             if val is None:
                 row.append("")
+            elif h == date_col:
+                # Force literal text so Sheets doesn't re-parse the Buddhist-year
+                # date string as a Gregorian date (e.g. "7/7/69" was being read as
+                # the year 1969 instead of 2026). Leading apostrophe forces text,
+                # same as typing it manually in the UI.
+                row.append("'" + str(val))
             else:
                 row.append(str(val))
         all_values.append(row)
@@ -367,28 +461,30 @@ async def webhook(request: Request):
             continue
 
         message_id = message["id"]
+        source = event.get("source", {})
+        # Group photos by where they came from, so multiple pages of the same
+        # report (sent to the same group/room/user) get batched together.
+        source_id = (
+            source.get("groupId") or source.get("roomId") or source.get("userId") or "unknown"
+        )
+
         try:
             image_bytes = download_line_image(message_id)
-            result = extract_form_data(image_bytes)
-            sheet_name = result.get("sheet")
-            rows = result.get("rows", [])
-
-            if sheet_name not in SHEET_NAMES:
-                print(f"Unknown sheet detected: {sheet_name}")
-                continue
-
-            if not rows:
-                print(f"No rows extracted for sheet: {sheet_name}")
-                continue
-
-            rows = fix_date(rows)
-
-            append_rows_to_sheet(sheet_name, rows)
-
         except Exception as e:
             import traceback
-            print(f"Error processing image {message_id}: {e}")
+            print(f"Error downloading image {message_id}: {e}")
             print(traceback.format_exc())
+            continue
+
+        batch = PENDING_BATCHES.setdefault(source_id, {"images": [], "task": None})
+        batch["images"].append(image_bytes)
+
+        # Reset the debounce timer: wait BATCH_DELAY_SECONDS after the most
+        # recent photo before processing, so all pages of a multi-photo
+        # report arrive before we extract + write anything.
+        if batch["task"] is not None:
+            batch["task"].cancel()
+        batch["task"] = asyncio.create_task(process_batch(source_id))
 
     return {"status": "ok"}
 
