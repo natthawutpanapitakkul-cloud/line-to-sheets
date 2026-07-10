@@ -397,6 +397,10 @@ INSTRUCTIONS:
 - Read numbers carefully — e.g. 921.10 is nine-hundred-twenty-one point ten, NOT 92.10
 - Use null for missing/blank/illegible values and dashes ("-")
 - Keys in each row object MUST be exact column header strings from the list above
+- CRITICAL for valid JSON: every non-null value MUST be wrapped in double quotes as a JSON string,
+  even if it looks like a plain number (e.g. write "60.8" not 60.8). This applies even to ambiguous
+  or partially illegible handwriting (e.g. "60.A") — always quote it as a string rather than emitting
+  it unquoted, otherwise the JSON becomes invalid and the ENTIRE photo's data is discarded.
 
 Return ONLY valid JSON in this format (no markdown, no explanation):
 {{"sheet": "<exact sheet name>", "rows": [{{"col_name": "value", ...}}, ...]}}
@@ -439,7 +443,37 @@ For non-time-based forms (Engine Stop Check, Weekly Engine Check), return a sing
     if brace_match:
         text = brace_match.group(0)
 
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        # Seen in practice: Claude occasionally emits an ambiguous/illegible
+        # reading as a bare unquoted token (e.g. `"CH₄ (%)": 60.A,`)
+        # despite the prompt instructing it to always quote values. That's
+        # invalid JSON syntax, and previously this exception propagated all
+        # the way up and caused the ENTIRE photo's extraction to be silently
+        # dropped from the batch (logged as an error but never recovered),
+        # which showed up downstream as a whole block of sheet columns being
+        # blank for that day even though the paper had the values written.
+        # Log the FULL response (not just the 800-char preview) so a repeat
+        # of this can be diagnosed without needing the photo resent, then
+        # try to auto-repair by quoting bare unquoted tokens and re-parse
+        # before giving up.
+        print(f"JSON parse failed ({e}). Full response ({len(text)} chars): {text}")
+
+        def _quote_bare_token(m: "re.Match") -> str:
+            token = m.group(1)
+            if token in ("true", "false", "null") or re.fullmatch(r"-?\d+(\.\d+)?", token):
+                return m.group(0)
+            return f': "{token}"' + m.group(2)
+
+        repaired = re.sub(r':\s*([^",\[\]{}\s][^,\[\]{}]*?)(\s*[,}\]])', _quote_bare_token, text)
+        try:
+            result = json.loads(repaired)
+            print("JSON repair succeeded after quoting bare token(s)")
+            return result
+        except json.JSONDecodeError as e2:
+            print(f"JSON repair also failed ({e2}); giving up on this image")
+            raise
 
 
 def fix_date(rows: list[dict]) -> list[dict]:
