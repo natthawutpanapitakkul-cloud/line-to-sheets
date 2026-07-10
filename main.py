@@ -198,6 +198,48 @@ def merge_extractions(extractions: list[dict]) -> dict:
     return {"sheet": sheet_name, "rows": merged_rows}
 
 
+def split_by_report(extractions: list[dict]) -> list[list[dict]]:
+    """Guard against a batch accidentally containing pages from more than one
+    day's report (e.g. a worker sends two different daily reports back to
+    back and both land inside the same debounce window).
+
+    Groups extractions by the Date value on their first row. A date shared by
+    2+ pages is treated as a real, distinct report. A date seen on only ONE
+    page is treated as a likely misread of one of the real reports and folded
+    into the largest one, rather than becoming its own incomplete report
+    (this preserves the existing behavior for the common case where one page
+    out of several just misread its date).
+    """
+    date_col = "Date (DD/MM/YY)"
+    groups: dict[str, list[dict]] = {}
+    order: list[str] = []
+    for e in extractions:
+        rows = e.get("rows", [])
+        date_val = rows[0].get(date_col) if rows else None
+        key = str(date_val) if date_val else "__unknown__"
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(e)
+
+    real_reports = [k for k in order if len(groups[k]) >= 2]
+
+    if len(real_reports) <= 1:
+        # Zero or one dominant date shared by multiple pages -> treat the
+        # whole batch as one report (existing behavior).
+        return [extractions]
+
+    print(f"Batch contains pages from {len(real_reports)} different reports (by date): {real_reports}")
+    result = {k: list(groups[k]) for k in real_reports}
+    largest_key = max(real_reports, key=lambda k: len(groups[k]))
+    for k in order:
+        if k not in real_reports:
+            print(f"Folding {len(groups[k])} page(s) dated '{k}' into report '{largest_key}' (likely misread, not enough pages to be its own report)")
+            result[largest_key].extend(groups[k])
+
+    return [result[k] for k in real_reports]
+
+
 async def process_batch(source_id: str):
     try:
         await asyncio.sleep(BATCH_DELAY_SECONDS)
@@ -225,19 +267,20 @@ async def process_batch(source_id: str):
         print("No successful extractions in batch")
         return
 
-    merged = merge_extractions(extractions)
-    sheet_name = merged.get("sheet")
-    rows = merged.get("rows", [])
+    for report_extractions in split_by_report(extractions):
+        merged = merge_extractions(report_extractions)
+        sheet_name = merged.get("sheet")
+        rows = merged.get("rows", [])
 
-    if sheet_name not in SHEET_NAMES:
-        print(f"Unknown sheet detected in batch: {sheet_name}")
-        return
-    if not rows:
-        print(f"No rows extracted for sheet: {sheet_name}")
-        return
+        if sheet_name not in SHEET_NAMES:
+            print(f"Unknown sheet detected in batch: {sheet_name}")
+            continue
+        if not rows:
+            print(f"No rows extracted for sheet: {sheet_name}")
+            continue
 
-    rows = fix_date(rows)
-    append_rows_to_sheet(sheet_name, rows)
+        rows = fix_date(rows)
+        append_rows_to_sheet(sheet_name, rows)
 
 
 def verify_line_signature(body: bytes, signature: str) -> bool:
