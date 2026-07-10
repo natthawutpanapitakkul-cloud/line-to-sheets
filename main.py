@@ -140,6 +140,12 @@ BATCH_DELAY_SECONDS = 20
 # source_id -> {"images": [bytes, ...], "task": asyncio.Task | None}
 PENDING_BATCHES: dict[str, dict] = {}
 
+# LINE retries webhook delivery if it doesn't get a fast-enough 200 response.
+# Track message IDs we've already scheduled so a retried delivery doesn't
+# process (and write) the same photo twice.
+SEEN_MESSAGE_IDS: set[str] = set()
+SEEN_MESSAGE_IDS_MAX = 2000
+
 
 def merge_extractions(extractions: list[dict]) -> dict:
     """Merge multiple Claude extraction results (one per photo/page of the
@@ -335,6 +341,11 @@ INSTRUCTIONS:
 - Read the date carefully from the top of the form — it is in DD/MM/YY format (Thai Buddhist year, e.g. 28/6/69)
 - If the form has time-based columns (e.g. 10:00, 14:00, 18:00, 22:00, 2:00, 6:00 น.):
   Return ONE row object for EVERY time slot column shown in the header (even if most values are dash/null)
+- The time-slot label itself (e.g. "10:00", "22:00") is ONLY a column header on the paper telling you
+  which reading to use for that row — it is NOT a data value. Do NOT write it into any sheet column,
+  and especially NEVER write it into "Engine Start Time" or "Engine Stop Time" — those two columns mean
+  the actual time the engine was started/stopped for the day (usually not shown per time-slot reading;
+  leave them null unless the paper explicitly labels a value as engine start/stop time).
 - Apply the field name mappings above — paper labels differ from sheet column names
 - STRICT RULE: For each time slot, only read the value from the EXACT row labeled on the paper.
   If a row shows "-" or is blank for that time slot, output null for that column.
@@ -463,6 +474,31 @@ def append_rows_to_sheet(sheet_name: str, rows: list[dict]):
         print(f"Appended {len(all_values)} row(s) to sheet: {sheet_name}")
 
 
+async def handle_image_event(message_id: str, source_id: str):
+    """Background task: download the photo and add it to the source's pending
+    batch. This runs AFTER the webhook has already responded to LINE, so a
+    slow image download or busy event loop can never delay the webhook
+    response enough to trigger a LINE retry (which previously caused the
+    same photos to be processed and written twice)."""
+    try:
+        image_bytes = download_line_image(message_id)
+    except Exception as e:
+        import traceback
+        print(f"Error downloading image {message_id}: {e}")
+        print(traceback.format_exc())
+        return
+
+    batch = PENDING_BATCHES.setdefault(source_id, {"images": [], "task": None})
+    batch["images"].append(image_bytes)
+
+    # Reset the debounce timer: wait BATCH_DELAY_SECONDS after the most
+    # recent photo before processing, so all pages of a multi-photo
+    # report arrive before we extract + write anything.
+    if batch["task"] is not None:
+        batch["task"].cancel()
+    batch["task"] = asyncio.create_task(process_batch(source_id))
+
+
 @app.post("/webhook")
 async def webhook(request: Request):
     body = await request.body()
@@ -481,6 +517,17 @@ async def webhook(request: Request):
             continue
 
         message_id = message["id"]
+
+        # Belt-and-suspenders dedup: if this exact message was already
+        # scheduled (e.g. a retried webhook delivery), skip it.
+        if message_id in SEEN_MESSAGE_IDS:
+            print(f"Duplicate webhook delivery for message {message_id}, skipping")
+            continue
+        SEEN_MESSAGE_IDS.add(message_id)
+        if len(SEEN_MESSAGE_IDS) > SEEN_MESSAGE_IDS_MAX:
+            for _ in range(100):
+                SEEN_MESSAGE_IDS.pop()
+
         source = event.get("source", {})
         # Group photos by where they came from, so multiple pages of the same
         # report (sent to the same group/room/user) get batched together.
@@ -488,23 +535,9 @@ async def webhook(request: Request):
             source.get("groupId") or source.get("roomId") or source.get("userId") or "unknown"
         )
 
-        try:
-            image_bytes = download_line_image(message_id)
-        except Exception as e:
-            import traceback
-            print(f"Error downloading image {message_id}: {e}")
-            print(traceback.format_exc())
-            continue
-
-        batch = PENDING_BATCHES.setdefault(source_id, {"images": [], "task": None})
-        batch["images"].append(image_bytes)
-
-        # Reset the debounce timer: wait BATCH_DELAY_SECONDS after the most
-        # recent photo before processing, so all pages of a multi-photo
-        # report arrive before we extract + write anything.
-        if batch["task"] is not None:
-            batch["task"].cancel()
-        batch["task"] = asyncio.create_task(process_batch(source_id))
+        # Schedule the download + batching in the background instead of
+        # awaiting it here, so we can return "ok" to LINE immediately.
+        asyncio.create_task(handle_image_event(message_id, source_id))
 
     return {"status": "ok"}
 
