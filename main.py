@@ -394,6 +394,12 @@ INSTRUCTIONS:
   If a row shows "-" or is blank for that time slot, output null for that column.
   NEVER fill a sheet column with a value from a different paper row just because the correct row is empty.
   Example: if "Gas flow (Nm³/h)" is "-" at 10:00, then "Gas Flow Before Scrubber (m³/hr)" must be null — do not use Pump pressure or any other row's value.
+- KNOWN TRAP in "3. Gas Engine (Daily)": on the paper, "ตรวจเช็คอุณหภูมิของเชื้อเพลิง" (fuel temperature, → "Fuel Temp (°C)")
+  sits directly above "ตรวจเช็คค่าความชื้นของเชื้อเพลิง" (fuel humidity, → "Gas Humidity (%RH)"), and the humidity row is
+  normally all dashes (no humidity sensor installed). Because these two rows sit right next to each other, do NOT copy
+  the temperature row's readings into "Gas Humidity (%RH)" just because the humidity row is blank — read each row
+  independently. "Fuel Temp (°C)" and "Gas Humidity (%RH)" must never end up holding the same set of values for a
+  report unless both were genuinely read from their own separate paper rows.
 - Read numbers carefully — e.g. 921.10 is nine-hundred-twenty-one point ten, NOT 92.10
 - Use null for missing/blank/illegible values and dashes ("-")
 - Keys in each row object MUST be exact column header strings from the list above
