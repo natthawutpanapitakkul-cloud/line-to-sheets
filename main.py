@@ -64,7 +64,12 @@ SHEET_COLUMNS = {
         "Remarks / Issues / Actions Taken",
     ],
     "3. Gas Engine (Daily)": [
-        "Date (DD/MM/YY)", "Shift A / B / C", "Engine Start Time", "Engine Stop Time",
+        # "Time (HH:MM)" added 14/7/69 — a column was inserted at sheet position B
+        # (the row's own time-slot value, e.g. "09:00") on the live sheet by hand.
+        # SHEET_COLUMNS is NOT read from the live sheet (see module docstring/CLAUDE.md),
+        # so this list has to be kept in sync by hand whenever the sheet is restructured,
+        # or every field below "Date" silently shifts one column left of its real header.
+        "Date (DD/MM/YY)", "Time (HH:MM)", "Shift A / B / C", "Engine Start Time", "Engine Stop Time",
         "Total Op. Hours This Day (hrs)", "Operator Name",
         "Flow Meter Before Engine (m³/hr)", "Gas Inlet Pressure (kPa)",
         "CH₄ (%)", "O₂ (%)", "CO₂ (%)", "H₂S (ppm)", "Gas Humidity (%RH)",
@@ -385,8 +390,10 @@ INSTRUCTIONS:
 - If the form has time-based columns (e.g. 10:00, 14:00, 18:00, 22:00, 2:00, 6:00 น.):
   Return ONE row object for EVERY time slot column shown in the header (even if most values are dash/null)
 - The time-slot label itself (e.g. "10:00", "22:00") is ONLY a column header on the paper telling you
-  which reading to use for that row — it is NOT a data value. Do NOT write it into any sheet column,
-  and especially NEVER write it into "Engine Start Time" or "Engine Stop Time" — those two columns mean
+  which reading to use for that row. If the sheet's column list above includes a "Time (HH:MM)" column,
+  put that row's time-slot label there — that column exists specifically to record it. Do NOT put the
+  time-slot label into any OTHER column, and especially NEVER write it into "Engine Start Time" or
+  "Engine Stop Time" — those two columns mean
   the actual time the engine was started/stopped for the day (usually not shown per time-slot reading;
   leave them null unless the paper explicitly labels a value as engine start/stop time).
 - Apply the field name mappings above — paper labels differ from sheet column names
