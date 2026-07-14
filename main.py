@@ -4,7 +4,6 @@ import hashlib
 import hmac
 import json
 import os
-import re
 
 import anthropic
 import httpx
@@ -415,12 +414,35 @@ INSTRUCTIONS:
   or partially illegible handwriting (e.g. "60.A") — always quote it as a string rather than emitting
   it unquoted, otherwise the JSON becomes invalid and the ENTIRE photo's data is discarded.
 
-Return ONLY valid JSON in this format (no markdown, no explanation):
-{{"sheet": "<exact sheet name>", "rows": [{{"col_name": "value", ...}}, ...]}}
+Call the record_form_data tool with the extracted "sheet" and "rows".
 
 For non-time-based forms (Engine Stop Check, Weekly Engine Check), return a single row in "rows".
 """
 
+    # Two earlier attempts at forcing JSON-only output both failed in production:
+    # 1. A plain-text reminder as the last content block ("respond with ONLY the
+    #    JSON object...") did NOT work — a real resend still showed Claude
+    #    narrating in prose ("I need to analyze this form carefully... Let me
+    #    read each row...") for all 3 photos, with output ballooning to 6000+
+    #    tokens and rows getting dropped. A reminder is just more text for the
+    #    model to weigh against everything else in the prompt; it doesn't
+    #    structurally prevent prose.
+    # 2. Prefilling the assistant turn with a literal "{" was tried next, but
+    #    claude-sonnet-4-6 rejects assistant message prefill outright with a 400
+    #    error ("This model does not support assistant message prefill. The
+    #    conversation must end with a user message.") — every photo in the very
+    #    next resend failed and ZERO rows were written, worse than either prior
+    #    failure mode.
+    # Forcing a tool call via tool_choice is the fix that's actually robust for
+    # this model: with tool_choice set to a specific tool, the API constrains
+    # the ENTIRE response to that one tool call — there is no content block
+    # where prose could appear before or instead of it, and no prefill of any
+    # kind is involved, so nothing here depends on prefill being supported.
+    # As a bonus, the tool's input_schema (rows are string-or-null key/value
+    # pairs) is enforced by the API itself, so the older problem of ambiguous
+    # handwriting producing an unquoted bare token that breaks json.loads()
+    # (92ebc20) can no longer happen — there's no free-text JSON to parse at all.
+    #
     # The instructions/column-list/field-mapping text above is identical on
     # EVERY call (nothing in it depends on the photo) but was previously sent
     # fresh, uncached, on every single request — full price, every photo.
@@ -441,6 +463,39 @@ For non-time-based forms (Engine Stop Check, Weekly Engine Check), return a sing
                 "cache_control": {"type": "ephemeral"},
             }
         ],
+        tools=[
+            {
+                "name": "record_form_data",
+                "description": (
+                    "Record the operation-form data extracted from the photo, "
+                    "as structured rows for the correct sheet tab."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "sheet": {
+                            "type": "string",
+                            "enum": list(SHEET_COLUMNS.keys()),
+                            "description": "Which of the 5 sheet tabs this form belongs to.",
+                        },
+                        "rows": {
+                            "type": "array",
+                            "description": (
+                                "One row object per time slot (or a single row for "
+                                "non-time-based forms). Keys must be exact column "
+                                "header strings from the sheet's column list."
+                            ),
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": {"type": ["string", "null"]},
+                            },
+                        },
+                    },
+                    "required": ["sheet", "rows"],
+                },
+            }
+        ],
+        tool_choice={"type": "tool", "name": "record_form_data"},
         messages=[
             {
                 "role": "user",
@@ -453,32 +508,7 @@ For non-time-based forms (Engine Stop Check, Weekly Engine Check), return a sing
                             "data": image_b64,
                         },
                     },
-                    {
-                        "type": "text",
-                        "text": (
-                            "Respond with ONLY the JSON object described in the system "
-                            "instructions. No explanation, no step-by-step reasoning, no "
-                            "narration of what you're reading, no markdown code fences — "
-                            "your entire response must be a single valid JSON object, "
-                            "starting with { and ending with }."
-                        ),
-                    },
                 ],
-            },
-            # A plain-text reminder (above) was tried first and did NOT work: a
-            # real resend after adding it still showed Claude narrating in prose
-            # ("I need to analyze this form carefully... Let me read each row...")
-            # for all 3 photos in the batch, with output still 6000+ tokens and
-            # only 6/7 rows appended — same symptoms as before the reminder was
-            # added. A reminder is just more text for the model to reason about
-            # or ignore; it doesn't structurally prevent prose.
-            # Prefilling the start of the assistant turn does: the API appends
-            # this literal text as the beginning of Claude's response and Claude
-            # can only continue from there, so a prose preamble is no longer
-            # possible — the response is structurally forced to start with "{".
-            {
-                "role": "assistant",
-                "content": "{",
             },
         ],
     )
@@ -490,53 +520,17 @@ For non-time-based forms (Engine Stop Check, Weekly Engine Check), return a sing
         f"cache_read={getattr(usage, 'cache_read_input_tokens', 0)}"
     )
 
-    # Re-add the "{" we prefilled into the assistant turn — the API only
-    # returns the continuation Claude generated after it, not the prefill text.
-    text = ("{" + response.content[0].text).strip()
-    print(f"Claude raw response (first 800 chars): {text[:800]}")
+    tool_use_block = next(
+        (b for b in response.content if getattr(b, "type", None) == "tool_use"), None
+    )
+    if tool_use_block is None:
+        # Shouldn't happen with tool_choice forcing this specific tool, but log
+        # the full response for diagnosis if it ever does.
+        print(f"No tool_use block in response (stop_reason={response.stop_reason}): {response.content}")
+        raise ValueError("Claude did not call record_form_data")
 
-    # Strip markdown code fences if present
-    if "```" in text:
-        match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
-        if match:
-            text = match.group(1).strip()
-
-    # Find outermost JSON object
-    brace_match = re.search(r"\{[\s\S]*\}", text)
-    if brace_match:
-        text = brace_match.group(0)
-
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as e:
-        # Seen in practice: Claude occasionally emits an ambiguous/illegible
-        # reading as a bare unquoted token (e.g. `"CH₄ (%)": 60.A,`)
-        # despite the prompt instructing it to always quote values. That's
-        # invalid JSON syntax, and previously this exception propagated all
-        # the way up and caused the ENTIRE photo's extraction to be silently
-        # dropped from the batch (logged as an error but never recovered),
-        # which showed up downstream as a whole block of sheet columns being
-        # blank for that day even though the paper had the values written.
-        # Log the FULL response (not just the 800-char preview) so a repeat
-        # of this can be diagnosed without needing the photo resent, then
-        # try to auto-repair by quoting bare unquoted tokens and re-parse
-        # before giving up.
-        print(f"JSON parse failed ({e}). Full response ({len(text)} chars): {text}")
-
-        def _quote_bare_token(m: "re.Match") -> str:
-            token = m.group(1)
-            if token in ("true", "false", "null") or re.fullmatch(r"-?\d+(\.\d+)?", token):
-                return m.group(0)
-            return f': "{token}"' + m.group(2)
-
-        repaired = re.sub(r':\s*([^",\[\]{}\s][^,\[\]{}]*?)(\s*[,}\]])', _quote_bare_token, text)
-        try:
-            result = json.loads(repaired)
-            print("JSON repair succeeded after quoting bare token(s)")
-            return result
-        except json.JSONDecodeError as e2:
-            print(f"JSON repair also failed ({e2}); giving up on this image")
-            raise
+    print(f"Claude tool call input (first 800 chars): {str(tool_use_block.input)[:800]}")
+    return tool_use_block.input
 
 
 def fix_date(rows: list[dict]) -> list[dict]:
