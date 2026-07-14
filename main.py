@@ -446,18 +446,6 @@ For non-time-based forms (Engine Stop Check, Weekly Engine Check), return a sing
                             "data": image_b64,
                         },
                     },
-                    # Moving the instructions into `system` (above) caused Claude to
-                    # narrate its reading step-by-step in plain English before ever
-                    # emitting JSON ("I need to analyze this form carefully... Let me
-                    # read each row...") instead of responding with JSON only. That
-                    # happened to still parse (the JSON showed up eventually and the
-                    # brace-matching regex below found it), but output ballooned to
-                    # 6000+ tokens per photo (versus ~2000-3000 before — eating most
-                    # of the input-side savings from caching) and burned enough of
-                    # the max_tokens budget that a longer form risks truncating
-                    # before the JSON ever appears, which would silently drop the
-                    # whole photo again. This tiny uncached reminder right before
-                    # generation is what restores strict JSON-only output.
                     {
                         "type": "text",
                         "text": (
@@ -469,7 +457,22 @@ For non-time-based forms (Engine Stop Check, Weekly Engine Check), return a sing
                         ),
                     },
                 ],
-            }
+            },
+            # A plain-text reminder (above) was tried first and did NOT work: a
+            # real resend after adding it still showed Claude narrating in prose
+            # ("I need to analyze this form carefully... Let me read each row...")
+            # for all 3 photos in the batch, with output still 6000+ tokens and
+            # only 6/7 rows appended — same symptoms as before the reminder was
+            # added. A reminder is just more text for the model to reason about
+            # or ignore; it doesn't structurally prevent prose.
+            # Prefilling the start of the assistant turn does: the API appends
+            # this literal text as the beginning of Claude's response and Claude
+            # can only continue from there, so a prose preamble is no longer
+            # possible — the response is structurally forced to start with "{".
+            {
+                "role": "assistant",
+                "content": "{",
+            },
         ],
     )
 
@@ -480,7 +483,9 @@ For non-time-based forms (Engine Stop Check, Weekly Engine Check), return a sing
         f"cache_read={getattr(usage, 'cache_read_input_tokens', 0)}"
     )
 
-    text = response.content[0].text.strip()
+    # Re-add the "{" we prefilled into the assistant turn — the API only
+    # returns the continuation Claude generated after it, not the prefill text.
+    text = ("{" + response.content[0].text).strip()
     print(f"Claude raw response (first 800 chars): {text[:800]}")
 
     # Strip markdown code fences if present
