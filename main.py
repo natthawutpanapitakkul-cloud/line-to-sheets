@@ -414,9 +414,26 @@ Return ONLY valid JSON in this format (no markdown, no explanation):
 For non-time-based forms (Engine Stop Check, Weekly Engine Check), return a single row in "rows".
 """
 
+    # The instructions/column-list/field-mapping text above is identical on
+    # EVERY call (nothing in it depends on the photo) but was previously sent
+    # fresh, uncached, on every single request — full price, every photo.
+    # Moving it into `system` with a cache_control breakpoint lets Anthropic
+    # cache it: only the photo (always different) is sent as fresh, uncached
+    # content in the user turn. Cache breakpoints only cache a stable PREFIX,
+    # so the static text has to be the thing marked for caching, not the
+    # image. Ephemeral cache entries last 5 minutes, so within one 3-photo
+    # report batch (photos processed roughly a minute apart) the 2nd and 3rd
+    # calls should hit the cache from the 1st call's write.
     response = anthropic_client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=8000,
+        system=[
+            {
+                "type": "text",
+                "text": prompt,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
         messages=[
             {
                 "role": "user",
@@ -429,10 +446,16 @@ For non-time-based forms (Engine Stop Check, Weekly Engine Check), return a sing
                             "data": image_b64,
                         },
                     },
-                    {"type": "text", "text": prompt},
                 ],
             }
         ],
+    )
+
+    usage = response.usage
+    print(
+        f"Token usage: input={usage.input_tokens} output={usage.output_tokens} "
+        f"cache_write={getattr(usage, 'cache_creation_input_tokens', 0)} "
+        f"cache_read={getattr(usage, 'cache_read_input_tokens', 0)}"
     )
 
     text = response.content[0].text.strip()
