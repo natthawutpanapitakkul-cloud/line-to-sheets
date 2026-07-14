@@ -446,6 +446,28 @@ For non-time-based forms (Engine Stop Check, Weekly Engine Check), return a sing
                             "data": image_b64,
                         },
                     },
+                    # Moving the instructions into `system` (above) caused Claude to
+                    # narrate its reading step-by-step in plain English before ever
+                    # emitting JSON ("I need to analyze this form carefully... Let me
+                    # read each row...") instead of responding with JSON only. That
+                    # happened to still parse (the JSON showed up eventually and the
+                    # brace-matching regex below found it), but output ballooned to
+                    # 6000+ tokens per photo (versus ~2000-3000 before — eating most
+                    # of the input-side savings from caching) and burned enough of
+                    # the max_tokens budget that a longer form risks truncating
+                    # before the JSON ever appears, which would silently drop the
+                    # whole photo again. This tiny uncached reminder right before
+                    # generation is what restores strict JSON-only output.
+                    {
+                        "type": "text",
+                        "text": (
+                            "Respond with ONLY the JSON object described in the system "
+                            "instructions. No explanation, no step-by-step reasoning, no "
+                            "narration of what you're reading, no markdown code fences — "
+                            "your entire response must be a single valid JSON object, "
+                            "starting with { and ending with }."
+                        ),
+                    },
                 ],
             }
         ],
